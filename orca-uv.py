@@ -16,6 +16,12 @@ from scipy.signal import find_peaks     # peak detection
 found_uv_section = False
 specstring_start = 'ABSORPTION SPECTRUM VIA TRANSITION ELECTRIC DIPOLE MOMENTS'
 specstring_end = 'ABSORPTION SPECTRUM VIA TRANSITION VELOCITY DIPOLE MOMENTS'
+ecd_start = "CD SPECTRUM VIA TRANSITION ELECTRIC DIPOLE MOMENTS"
+ecd_end = "CD SPECTRUM VIA TRANSITION VELOCITY DIPOLE MOMENTS"
+vcd_start = "VCD SPECTRUM CALCULATION"
+vcd_end = "throughout the entire PROP-calculation"
+ir_start = "IR SPECTRUM"
+ir_end = "The epsilon (eps)"
 export_delim = " "
 
 # Default line widths (FWHM) in respective units
@@ -26,20 +32,21 @@ w_ev = 0.2                  # eV  ### NEW ###
 # Plot configuration
 spectrum_title = "Absorption spectrum"
 spectrum_title_weight = "bold"
-y_label = "intensity"
-x_label_wn = r'energy /cm$^{-1}$'
-x_label_nm = r'$\lambda$ /nm'
-x_label_ev = r'energy /eV'
+#y_label = "intensity"
+x_label_wn = r'Wavenumber (cm$^{-1}$)'
+x_label_nm = r'$\lambda$ (nm)'
+x_label_ev = r'Energy (eV)'
 normalize_export = False
 normalize_factor = 1
 figure_dpi = 300
 
 # Options
-show_single_gauss = False
+#ecd_spectra = False
+show_single_gauss = True
 show_single_gauss_area = False
 show_conv_spectrum = True
-show_sticks = True
-label_peaks = True
+#show_sticks = True
+label_peaks = False
 minor_ticks = True
 show_grid = False
 linear_locator = True
@@ -83,6 +90,38 @@ parser = argparse.ArgumentParser(prog='orca_uv', description='Easily plot absorp
 
 # Required argument: ORCA output file
 parser.add_argument("filename", help="the ORCA output file")
+
+# Plot ECD instead of UV-Vis
+parser.add_argument('-ecd', '--ecd_spectra', default=0, action='store_true',
+                    help='plot electronic circular dichroism')
+
+# Plot VCD
+parser.add_argument('-vcd', '--vcd_spectra', default=0, action='store_true',
+                    help='plot vibrational circular dichroism')
+
+# Plot IR
+parser.add_argument('-ir', '--ir_spectra', default=0, action='store_true',
+                    help='plot IR spectra')
+
+# Plot sticks
+parser.add_argument('-stick', '--show_sticks', default=0, action='store_true',
+                    help='plot signal sticks')
+
+# Label peaks
+parser.add_argument('-peak', '--label_peaks', default=0, action='store_true',
+                    help='plot signal sticks')
+
+# Plot sticks
+parser.add_argument('-ylab', '--y_label', type=str, default='Intensity',
+                    help='Label for y axis')
+
+# Activate single gaussian plotting
+parser.add_argument('-ssg', '--show_single_gauss', default=0, action='store_true',
+                    help='show single gaussians')
+
+# Activate colored area under single gaussians
+parser.add_argument('-ssga', '--show_single_gauss_area', default=0, action='store_true',
+                    help='color single gaussians area')
 
 # Whether to show the matplotlib window
 parser.add_argument('-s', '--show', default=0, action='store_true',
@@ -132,7 +171,7 @@ if not (1 <= args.linewidth_nm <= 500):
 else:
     w_nm = args.linewidth_nm
 
-if not (100 <= args.linewidth_wn <= 20000):
+if not (100 <= args.linewidth_wn <= 20000) and not (args.vcd_spectra or args.ir_spectra):
     print("warning! linewidth_wn out of [100..20000], reset to 1000")
     w_wn = 1000
 else:
@@ -166,37 +205,76 @@ try:
             elif "Program Version" in line:
                 energy_column = 1
                 intens_column = 3
-            
-            if specstring_start in line:
-                found_uv_section = True
-                for line in input_file:
-                    if specstring_end in line:
-                        break
-                    if re.search(r"\d\s{1,}\d", line):
-                        splitted = line.strip().split()
-                        energylist.append(float(splitted[energy_column]))
-                        intenslist.append(float(splitted[intens_column]))
+            if args.ecd_spectra:
+                if ecd_start in line:
+                    found_uv_section = True
+                    for line in input_file:
+                        if ecd_end in line:
+                            break
+                        if re.search(r"\d\s{1,}\d", line):
+                            splitted = line.strip().split()
+                            energylist.append(float(splitted[energy_column]))
+                            intenslist.append(float(splitted[intens_column]))
+            elif args.vcd_spectra:
+                freq_column = 1
+                intens_column = 2
+                if vcd_start in line:
+                    found_uv_section = True
+                    for line in input_file:
+                        if vcd_end in line:
+                            break
+                        if re.search(r"\d\s{1,}\d", line):
+                            splitted = line.strip().split()
+                            energylist.append(float(splitted[freq_column]))
+                            intenslist.append(float(splitted[intens_column]))
+            elif args.ir_spectra:
+                freq_column = 1
+                intens_column = 3
+                if ir_start in line:
+                    found_uv_section = True
+                    for line in input_file:
+                        if ir_end in line:
+                            break
+                        if re.search(r"\d\s{1,}\d", line):
+                            splitted = line.strip().split()
+                            energylist.append(float(splitted[freq_column]))
+                            intenslist.append(float(splitted[intens_column]))
+
+            else:
+                if specstring_start in line:
+                    found_uv_section = True
+                    for line in input_file:
+                        if specstring_end in line:
+                            break
+                        if re.search(r"\d\s{1,}\d", line):
+                            splitted = line.strip().split()
+                            energylist.append(float(splitted[energy_column]))
+                            intenslist.append(float(splitted[intens_column]))
+
 except IOError:
     print(f"'{args.filename}' not found")
     sys.exit(1)
 
-if not found_uv_section:
+if not found_uv_section and not (args.vcd_spectra or args.ir_spectra):
     print(f"'{specstring_start}' not found in '{args.filename}'")
     sys.exit(1)
 
 # Convert energies from cm⁻¹ to the chosen unit
-if unit == 'nm':
-    # cm⁻¹ -> nm
-    energylist = [1.0e7 / wn for wn in energylist]
-    w = w_nm
-elif unit == 'ev':
-    # cm⁻¹ -> eV
-    # 1 cm⁻¹ = 1.23984193e-4 eV
-    energylist = [wn * 1.23984193e-4 for wn in energylist]
-    w = w_ev
+if not (args.vcd_spectra or args.ir_spectra):
+    if unit == 'nm':
+        # cm⁻¹ -> nm
+        energylist = [1.0e7 / wn for wn in energylist]
+        w = w_nm
+    elif unit == 'ev':
+        # cm⁻¹ -> eV
+        # 1 cm⁻¹ = 1.23984193e-4 eV
+        energylist = [wn * 1.23984193e-4 for wn in energylist]
+        w = w_ev
+    else:
+        # unit == 'wn', no conversion
+        w = w_wn
 else:
-    # unit == 'wn', no conversion
-    w = w_wn
+    w=w_wn
 
 fig, ax = plt.subplots()
 
@@ -211,11 +289,11 @@ plt_range_x = np.arange(0, xmax_val + w * 3, step)
 
 # Build the Gaussian sum
 for i, en in enumerate(energylist):
-    if show_single_gauss:
-        ax.plot(plt_range_x, gauss(intenslist[i], plt_range_x, en, w), 
+    if args.show_single_gauss:
+        ax.plot(plt_range_x, gauss(intenslist[i], plt_range_x, en, w),
                 color="grey", alpha=0.5)
-    if show_single_gauss_area:
-        ax.fill_between(plt_range_x, gauss(intenslist[i], plt_range_x, en, w), 
+    if args.show_single_gauss_area:
+        ax.fill_between(plt_range_x, gauss(intenslist[i], plt_range_x, en, w),
                         color="grey", alpha=0.5)
     gauss_sum.append(gauss(intenslist[i], plt_range_x, en, w))
 
@@ -226,14 +304,14 @@ if show_conv_spectrum:
     ax.plot(plt_range_x, plt_range_gauss_sum_y, color="black", linewidth=0.8)
 
 # Plot stick spectrum
-if show_sticks:
+if args.show_sticks:
     ax.stem(energylist, intenslist, linefmt="dimgrey", markerfmt=" ", basefmt=" ")
 
 # Peak detection
 peaks, _ = find_peaks(plt_range_gauss_sum_y, height=0)
 
 # Label peaks if desired
-if show_conv_spectrum and label_peaks:
+if show_conv_spectrum and args.label_peaks:
     for peak in peaks:
         ax.annotate(peak,
                     xy=(peak, plt_range_gauss_sum_y[peak]),
@@ -249,9 +327,9 @@ elif unit == 'ev':
 else:
     ax.set_xlabel(x_label_wn)
 
-ax.set_ylabel(y_label)
-ax.set_title(spectrum_title, fontweight=spectrum_title_weight)
-ax.get_yaxis().set_ticks([])  # remove y-axis ticks
+ax.set_ylabel(args.y_label)
+#ax.set_title(spectrum_title, fontweight=spectrum_title_weight)
+#ax.get_yaxis().set_ticks([])  # remove y-axis ticks
 plt.tight_layout()
 
 # Minor ticks
@@ -286,12 +364,12 @@ else:
 xlimits = ax.get_xlim()  # (xmin, xmax) in float
 xlow, xhigh = min(xlimits), max(xlimits)
 mask = (plt_range_x >= xlow) & (plt_range_x <= xhigh)
-if np.any(mask):
-    ysub = plt_range_gauss_sum_y[mask]
-    ymax = np.max(ysub)
-    ax.set_ylim(0, ymax + 0.1 * ymax)
-else:
-    ax.set_ylim(0, 1)
+#if np.any(mask):
+#    ysub = plt_range_gauss_sum_y[mask]
+#    ymax = np.max(ysub)
+#    ax.set_ylim(0, ymax + 0.1 * ymax)
+#else:
+#    ax.set_ylim(0, 1)
 
 # Linear locator
 if linear_locator:
@@ -302,7 +380,7 @@ if show_grid:
     ax.grid(True, which='major', axis='x', color='black', linestyle='dotted', linewidth=0.5)
 
 # Increase figure size by a factor N
-N = 1.5
+N = 1
 params = plt.gcf()
 plSize = params.get_size_inches()
 params.set_size_inches((plSize[0] * N, plSize[1] * N))
