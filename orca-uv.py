@@ -98,7 +98,7 @@ def nGauss(a, m, x, w):
       x : array of x values
       w : line width (FWHM)
     """
-    return a * (m * 2 * np.sqrt(np.log(2)) / (w * np.sqrt(np.pi))) * np.exp(-4* (np.log(2) * ((x - m) / w) ** 2))
+    return a * (2 * np.sqrt(np.log(2)) / (w * np.sqrt(np.pi))) * np.exp(-4* (np.log(2) * ((x - m) / w) ** 2))
 
 
 def roundup(x, unit):
@@ -233,9 +233,15 @@ parser.add_argument('-yu', '--yunit', choices=['mili', 'mcd'],
 # Colors
 parser.add_argument('-cs','--colors', nargs=2, type=str, default=['black','grey'])
 
+# Usage of normalized gaussian
+parser.add_argument('-norm','--norm_gauss', default=0, action='store_true',
+                    help='Use area-normalized gaussians instead of heigth-normalized ones.')
+
 args = parser.parse_args()
 
 colors = args.colors
+
+norm_g = args.norm_gauss
 
 spec_type = 'uvvis'
 if args.ir_spectra:
@@ -262,6 +268,8 @@ if not args.y_label:
         args.y_label = '$f_{obs}$'
 
 if args.yunit:
+    if not norm_g:
+        print("Warning: Correct unit conversion requieres normalized gaussians.")
     if args.yunit == 'mcd':
         args.y_label = r'$\Delta \epsilon (M^{-1} cm^{-1})$'
     elif args.yunit == 'mili':
@@ -468,28 +476,40 @@ if args.second_file:
 # Build the Gaussian sum
 def gauss_sum(energylist, intenslist, x_range, w, spec_type,
         ssg=False, ssga=False, double_ax=False,
-        ax = 0, colors = ['black', 'black']):
+        ax = 0, colors = ['black', 'black'], norm = False):
     gauss_sum_data = []
     gauss_sum_data_all = []
+
+    if double_ax and (not (spec_type == 'vcd' or spec_type == 'ir')):
+        x_range_s = ev_to_nm(x_range)
+    else:
+        x_range_s = x_range
+
     for i, en in enumerate(energylist):
+        if norm:
+            single_gauss = nGauss(intenslist[i], en, x_range, w)
+        else:
+            single_gauss = gauss(intenslist[i], en, x_range, w)
         if ssg:
-            if double_ax:
-                if not (spec_type == 'vcd' or spec_type == 'ir'):
-                    ax.plot(ev_to_nm(x_range), gauss(intenslist[i], en, x_range, w),
-                            color=colors[0], alpha=0.3)
-            else:
-                ax.plot(x_range, gauss(intenslist[i], en, x_range, w),
+            if spec_type in ['ecd', 'ecdv', 'secd', 'vcd'] and norm:
+                ax.plot(x_range_s, single_gauss * en,
                         color=colors[0], alpha=0.3)
-                #print("cayay")
-        if ssga:
-            if double_ax:
-                if not (spec_type == 'vcd' or spec_type == 'ir'):
-                    ax.fill_between(ev_to_nm(x_range), gauss(intenslist[i], en, x_range, w),
-                            color=colors[0], alpha=0.3)
             else:
-                ax.fill_between(x_range, gauss(intenslist[i], en, x_range, w),
-                            color=colors[0], alpha=0.3)
-        gauss_sum_data_all.append(gauss(intenslist[i], en, x_range, w))
+                ax.plot(x_range_s, single_gauss,
+                        color=colors[0], alpha=0.3)
+        if ssga:
+            if spec_type in ['ecd', 'ecdv', 'secd', 'vcd'] and norm:
+                ax.fill_between(x_range_s, single_gauss * en,
+                        color=colors[0], alpha=0.3)
+            else:
+                ax.fill_between(x_range_s, single_gauss,
+                        color=colors[0], alpha=0.3)
+
+        # R strength needs multiplication by the corresponding energy
+        if spec_type in ['ecd', 'ecdv', 'secd', 'vcd'] and norm:
+            gauss_sum_data_all.append(single_gauss * en)
+        else:
+            gauss_sum_data_all.append(single_gauss)
 
     gauss_sum_data = np.sum(gauss_sum_data_all, axis=0)
     return gauss_sum_data, gauss_sum_data_all
@@ -497,7 +517,7 @@ def gauss_sum(energylist, intenslist, x_range, w, spec_type,
 plt_range_gauss_sum_y, _ = gauss_sum(energylist, intenslist, plt_range_x,
                         w, spec_type, ssg=args.show_single_gauss,
                         ssga=args.show_single_gauss_area, double_ax=args.double_axis,
-                        ax=ax, colors=colors)
+                        ax=ax, colors=colors, norm=norm_g)
 if args.second_file:
     plt_sum_y2, _ = gauss_sum(energylist2, intenslist2, plt_range_x2,
                         w, spec_type, ssg=args.show_single_gauss,
@@ -512,15 +532,19 @@ if args.double_axis and not (args.vcd_spectra or args.ir_spectra):
     unit = 'nm'
 
 if args.yunit:
+    if not norm_g:
+        print("Warning: Correct unit conversion requieres normalized gaussians.")
     if args.yunit == 'mcd':
         plt_range_gauss_sum_y = plt_range_gauss_sum_y / 22.94
+        args.y_label = r'$\Delta \epsilon (M^{-1} cm^{-1})$'
     elif args.yunit == 'mili':
         plt_range_gauss_sum_y = (plt_range_gauss_sum_y / 22.97) * 32980 #* c * l
+        args.y_label = r'$[\theta]$ ($\deg cm^2 dmol^{-1}$)'
 
 # Plot stick spectrum
 if args.show_sticks:
     _, stemlines, _ = ax.stem(energylist, intenslist, linefmt=colors[0], markerfmt=" ", basefmt=" ")
-    plt.setp(stemlines, alpha=0.4)
+    plt.setp(stemlines, alpha=0.4, linewidth=1)
 
 # Plot the convoluted spectrum
 if show_conv_spectrum:
